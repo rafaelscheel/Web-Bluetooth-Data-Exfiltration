@@ -1,0 +1,6 @@
+# Python dependencies for Bluetooth GATT Server
+# Install with: pip3 install -r requirements.txt
+# Or on Debian/Ubuntu: sudo apt-get install python3-dbus python3-gi
+
+dbus-python>=1.2.16
+PyGObject>=3.36.0
