@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BLE File Upload</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 600px; margin: 40px auto; padding: 0 20px;
+    background: #f5f5f5; color: #333;
+  }
+  h1 { font-size: 1.5em; }
+  .card {
+    background: #fff; border-radius: 8px; padding: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px;
+  }
+  button {
+    padding: 10px 20px; border: none; border-radius: 6px;
+    cursor: pointer; font-size: 1em; margin: 4px 2px;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary { background: #0066cc; color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #0055aa; }
+  .btn-danger { background: #cc3333; color: #fff; }
+  .btn-danger:hover:not(:disabled) { background: #aa2222; }
+  .btn-secondary { background: #666; color: #fff; }
+  .btn-secondary:hover:not(:disabled) { background: #555; }
+  #status {
+    margin-top: 12px; padding: 10px; border-radius: 4px;
+    background: #e8e8e8; font-family: monospace; font-size: 0.9em;
+    white-space: pre-wrap; max-height: 200px; overflow-y: auto;
+  }
+  .progress-bar {
+    width: 100%; height: 24px; background: #ddd; border-radius: 4px;
+    overflow: hidden; margin-top: 12px; display: none;
+  }
+  .progress-bar-fill {
+    height: 100%; background: #0066cc; transition: width 0.2s;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 0.8em; font-weight: bold; min-width: 2em;
+  }
+  input[type="file"] { margin: 10px 0; }
+  label { font-weight: 600; display: block; margin-bottom: 6px; }
+  .chunk-size-input {
+    margin-top: 10px; display: flex; align-items: center; gap: 8px;
+  }
+  .chunk-size-input input {
+    width: 80px; padding: 6px; border: 1px solid #ccc; border-radius: 4px;
+  }
+  .info { font-size: 0.85em; color: #666; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<h1>BLE File Upload Client</h1>
+
+<div class="card">
+  <label>1. Connect to BLE Server</label>
+  <button id="connectBtn" class="btn-primary" onclick="connectDevice()">
+    Scan &amp; Connect
+  </button>
+  <button id="disconnectBtn" class="btn-danger" onclick="disconnectDevice()" disabled>
+    Disconnect
+  </button>
+  <p class="info">
+    The server must be advertising the file transfer service.<br>
+    Service UUID: <code>12345678-1234-5678-1234-56789abcdef0</code>
+  </p>
+</div>
+
+<div class="card">
+  <label>2. Select a File</label>
+  <input type="file" id="fileInput" disabled>
+
+  <div class="chunk-size-input">
+    <span>Chunk size (bytes):</span>
+    <input type="number" id="chunkSize" value="20" min="1" max="512">
+  </div>
+  <p class="info">
+    Default 20 bytes is safe for all BLE connections (minimum ATT MTU of 23 minus 3-byte header).
+    If your adapter and OS negotiate a larger MTU, you can increase this up to 512.
+  </p>
+</div>
+
+<div class="card">
+  <label>3. Upload</label>
+  <button id="uploadBtn" class="btn-primary" onclick="uploadFile()" disabled>
+    Upload File
+  </button>
+  <button id="abortBtn" class="btn-secondary" onclick="abortTransfer()" disabled>
+    Abort
+  </button>
+
+  <div class="progress-bar" id="progressBar">
+    <div class="progress-bar-fill" id="progressFill" style="width: 0%">0%</div>
+  </div>
+</div>
+
+<div class="card">
+  <label>Log</label>
+  <div id="status">Ready. Click "Scan &amp; Connect" to start.</div>
+</div>
+
+<script>
+// -------------------------------------------------------------------------
+// UUIDs — must match the server
+// -------------------------------------------------------------------------
+const SERVICE_UUID        = '12345678-1234-5678-1234-56789abcdef0';
+const CONTROL_CHRC_UUID   = '12345678-1234-5678-1234-56789abcdef1';
+const DATA_CHRC_UUID      = '12345678-1234-5678-1234-56789abcdef2';
+
+// Control commands
+const CMD_BEGIN = 0x01;
+const CMD_END   = 0x02;
+const CMD_ABORT = 0x03;
+
+// -------------------------------------------------------------------------
+// State
+// -------------------------------------------------------------------------
+let bleDevice = null;
+let gattServer = null;
+let controlCharacteristic = null;
+let dataCharacteristic = null;
+let transferInProgress = false;
+
+// -------------------------------------------------------------------------
+// UI helpers
+// -------------------------------------------------------------------------
+const statusEl     = document.getElementById('status');
+const connectBtn   = document.getElementById('connectBtn');
+const disconnectBtn = document.getElementById('disconnectBtn');
+const fileInput    = document.getElementById('fileInput');
+const uploadBtn    = document.getElementById('uploadBtn');
+const abortBtn     = document.getElementById('abortBtn');
+const progressBar  = document.getElementById('progressBar');
+const progressFill = document.getElementById('progressFill');
+
+function log(msg) {
+  const ts = new Date().toLocaleTimeString();
+  statusEl.textContent += '\n[' + ts + '] ' + msg;
+  statusEl.scrollTop = statusEl.scrollHeight;
+}
+
+function setProgress(pct) {
+  progressFill.style.width = pct + '%';
+  progressFill.textContent = Math.round(pct) + '%';
+}
+
+function setConnectedUI(connected) {
+  connectBtn.disabled = connected;
+  disconnectBtn.disabled = !connected;
+  fileInput.disabled = !connected;
+  uploadBtn.disabled = !connected;
+}
+
+// -------------------------------------------------------------------------
+// BLE Connection
+// -------------------------------------------------------------------------
+async function connectDevice() {
+  if (!navigator.bluetooth) {
+    log('ERROR: Web Bluetooth is not available in this browser.');
+    log('Use Chrome/Edge on HTTPS or localhost.');
+    return;
+  }
+
+  try {
+    log('Requesting BLE device with service ' + SERVICE_UUID + '...');
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE_UUID] }],
+    });
+
+    log('Device found: ' + (bleDevice.name || 'unnamed'));
+    bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+    log('Connecting to GATT server...');
+    gattServer = await bleDevice.gatt.connect();
+    log('Connected to GATT server.');
+
+    log('Getting file transfer service...');
+    const service = await gattServer.getPrimaryService(SERVICE_UUID);
+
+    log('Getting control characteristic...');
+    controlCharacteristic = await service.getCharacteristic(CONTROL_CHRC_UUID);
+
+    log('Getting data characteristic...');
+    dataCharacteristic = await service.getCharacteristic(DATA_CHRC_UUID);
+
+    log('Ready for file upload.');
+    setConnectedUI(true);
+
+  } catch (err) {
+    log('Connection error: ' + err.message);
+    bleDevice = null;
+    gattServer = null;
+    controlCharacteristic = null;
+    dataCharacteristic = null;
+  }
+}
+
+function disconnectDevice() {
+  if (bleDevice && bleDevice.gatt.connected) {
+    bleDevice.gatt.disconnect();
+  }
+  onDisconnected();
+}
+
+function onDisconnected() {
+  log('Disconnected from device.');
+  gattServer = null;
+  controlCharacteristic = null;
+  dataCharacteristic = null;
+  transferInProgress = false;
+  setConnectedUI(false);
+  progressBar.style.display = 'none';
+}
+
+// -------------------------------------------------------------------------
+// File Upload
+// -------------------------------------------------------------------------
+async function uploadFile() {
+  if (!controlCharacteristic || !dataCharacteristic) {
+    log('ERROR: Not connected. Connect to the server first.');
+    return;
+  }
+
+  const file = fileInput.files[0];
+  if (!file) {
+    log('ERROR: No file selected.');
+    return;
+  }
+
+  const chunkSize = parseInt(document.getElementById('chunkSize').value, 10);
+  if (isNaN(chunkSize) || chunkSize < 1 || chunkSize > 512) {
+    log('ERROR: Chunk size must be between 1 and 512.');
+    return;
+  }
+
+  transferInProgress = true;
+  uploadBtn.disabled = true;
+  abortBtn.disabled = false;
+  progressBar.style.display = 'block';
+  setProgress(0);
+
+  try {
+    // 1. Send BEGIN command: 0x01 + filename (UTF-8)
+    // The entire command must fit in a single write (one ATT Write Request).
+    // Truncate filename to fit within chunkSize - 1 bytes.
+    const filenameBytes = new TextEncoder().encode(file.name);
+    const maxFilenameLen = Math.min(filenameBytes.length, chunkSize - 1);
+    const truncatedName = filenameBytes.slice(0, maxFilenameLen);
+
+    const beginCmd = new Uint8Array(1 + truncatedName.length);
+    beginCmd[0] = CMD_BEGIN;
+    beginCmd.set(truncatedName, 1);
+
+    const sentFilename = new TextDecoder().decode(truncatedName);
+    log('Sending BEGIN: filename="' + sentFilename + '" size=' + file.size + ' bytes');
+    if (maxFilenameLen < filenameBytes.length) {
+      log('WARNING: Filename truncated to ' + maxFilenameLen + ' bytes to fit in chunk size.');
+    }
+
+    await controlCharacteristic.writeValueWithResponse(beginCmd);
+
+    // 2. Read file and send data chunks
+    const arrayBuffer = await file.arrayBuffer();
+    const data = new Uint8Array(arrayBuffer);
+    const totalChunks = Math.ceil(data.length / chunkSize);
+
+    log('Sending ' + data.length + ' bytes in ' + totalChunks + ' chunks of ' + chunkSize + ' bytes...');
+
+    for (let offset = 0; offset < data.length; offset += chunkSize) {
+      if (!transferInProgress) {
+        log('Transfer aborted by user.');
+        return;
+      }
+
+      const end = Math.min(offset + chunkSize, data.length);
+      const chunk = data.slice(offset, end);
+
+      await dataCharacteristic.writeValueWithResponse(chunk);
+
+      const pct = ((offset + chunk.length) / data.length) * 100;
+      setProgress(pct);
+    }
+
+    // 3. Send END command
+    const endCmd = new Uint8Array([CMD_END]);
+    await controlCharacteristic.writeValueWithResponse(endCmd);
+
+    setProgress(100);
+    log('Upload complete: ' + file.name + ' (' + data.length + ' bytes)');
+
+  } catch (err) {
+    log('Upload error: ' + err.message);
+    // Try to send ABORT if still connected
+    try {
+      if (controlCharacteristic) {
+        await controlCharacteristic.writeValueWithResponse(new Uint8Array([CMD_ABORT]));
+      }
+    } catch (_) { /* ignore cleanup errors */ }
+  } finally {
+    transferInProgress = false;
+    uploadBtn.disabled = !gattServer;
+    abortBtn.disabled = true;
+  }
+}
+
+async function abortTransfer() {
+  transferInProgress = false;
+  try {
+    if (controlCharacteristic) {
+      await controlCharacteristic.writeValueWithResponse(new Uint8Array([CMD_ABORT]));
+      log('Abort command sent to server.');
+    }
+  } catch (err) {
+    log('Abort error: ' + err.message);
+  }
+  abortBtn.disabled = true;
+  uploadBtn.disabled = !gattServer;
+  progressBar.style.display = 'none';
+}
+</script>
+
+</body>
+</html>
