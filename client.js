@@ -234,7 +234,7 @@ async function uploadFile() {
                     if (retries === 0) {
                         throw error;
                     }
-                    log(`Chunk ${i + 1} failed, retrying... (${retries} attempts left)`, 'error');
+                    log(`Chunk ${i + 1} failed (${error.message}), retrying... (${retries} attempts left)`, 'error');
                     await new Promise(resolve => setTimeout(resolve, 50));
                 }
             }
