@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Bluetooth File Upload</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status.disconnected {
+            background: #fee;
+            color: #c33;
+            border: 1px solid #fcc;
+        }
+
+        .status.connecting {
+            background: #ffeaa7;
+            color: #d63031;
+            border: 1px solid #fdcb6e;
+        }
+
+        .status.connected {
+            background: #d5f4e6;
+            color: #00b894;
+            border: 1px solid #81ecec;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status.disconnected .status-dot {
+            background: #c33;
+        }
+
+        .status.connecting .status-dot {
+            background: #d63031;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .status.connected .status-dot {
+            background: #00b894;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.3;
+            }
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            flex: 1;
+            min-width: 150px;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #00b894;
+            color: white;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #00a085;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 184, 148, 0.4);
+        }
+
+        .btn-danger {
+            background: #d63031;
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #c0282a;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(214, 48, 49, 0.4);
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        input[type="file"]:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+
+        .file-info {
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #555;
+        }
+
+        .file-info strong {
+            color: #333;
+        }
+
+        .progress-container {
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .progress-container.active {
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #f0f0f0;
+            border-radius: 15px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .log-container {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .log-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .log-entry {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            padding: 5px 0;
+            border-bottom: 1px solid #e0e0e0;
+            color: #555;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-entry.error {
+            color: #d63031;
+        }
+
+        .log-entry.success {
+            color: #00b894;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #1565c0;
+        }
+
+        .info-box strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔷 Web Bluetooth File Upload</h1>
+        <p class="subtitle">Upload files to your Bluetooth GATT server</p>
+
+        <div class="info-box">
+            <strong>ℹ️ Requirements:</strong>
+            • Chrome/Edge browser with HTTPS or localhost<br>
+            • Bluetooth enabled on your device<br>
+            • GATT server running (bluetooth_server.py)
+        </div>
+
+        <div id="status" class="status disconnected">
+            <span class="status-dot"></span>
+            <span id="statusText">Disconnected</span>
+        </div>
+
+        <div class="button-group">
+            <button id="connectBtn" class="btn-primary">Connect to Server</button>
+            <button id="disconnectBtn" class="btn-danger" disabled>Disconnect</button>
+        </div>
+
+        <div class="file-input-wrapper">
+            <input type="file" id="fileInput" disabled>
+        </div>
+
+        <div id="fileInfo" class="file-info" style="display: none;">
+            <strong>Selected File:</strong> <span id="fileName"></span><br>
+            <strong>Size:</strong> <span id="fileSize"></span><br>
+            <strong>Type:</strong> <span id="fileType"></span>
+        </div>
+
+        <div class="button-group">
+            <button id="uploadBtn" class="btn-secondary" disabled>Upload File</button>
+        </div>
+
+        <div id="progressContainer" class="progress-container">
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%">0%</div>
+            </div>
+        </div>
+
+        <div class="log-container">
+            <div class="log-title">📋 Activity Log</div>
+            <div id="logEntries"></div>
+        </div>
+    </div>
+
+    <script src="client.js"></script>
+</body>
+</html>
