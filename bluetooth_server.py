@@ -591,16 +591,16 @@ def main():
     print("=" * 60)
     print("GATT Web Bluetooth Server - File Upload Service")
     print("=" * 60)
-    
+
+    # Setup D-Bus main loop before any D-Bus operations (including dependency checks)
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+
     # Check dependencies first
     if not check_dependencies():
         print("\n❌ Dependency check failed. Please fix the issues above.")
         sys.exit(1)
 
     print("\nStarting GATT server...")
-    
-    # Setup D-Bus
-    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
 
     bus = dbus.SystemBus()
 
