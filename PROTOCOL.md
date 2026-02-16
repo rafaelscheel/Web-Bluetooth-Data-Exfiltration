@@ -1,6 +1,6 @@
 # File Transfer Protocol Example
 
-This document demonstrates the Web Bluetooth file transfer protocol flow.
+This document demonstrates the Web Bluetooth file transfer protocol flow. 
 
 ## Protocol Flow
 
