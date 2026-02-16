@@ -474,6 +474,7 @@ class Advertisement(dbus.service.Object):
         self.service_data = None
         self.local_name = None
         self.include_tx_power = False
+        self.includes = None
         self.data = None
         dbus.service.Object.__init__(self, bus, self.path)
 
@@ -496,6 +497,8 @@ class Advertisement(dbus.service.Object):
             properties['LocalName'] = dbus.String(self.local_name)
         if self.include_tx_power:
             properties['IncludeTxPower'] = dbus.Boolean(self.include_tx_power)
+        if self.includes is not None:
+            properties['Includes'] = dbus.Array(self.includes, signature='s')
 
         if self.data is not None:
             properties['Data'] = dbus.Dictionary(
@@ -552,6 +555,7 @@ class FileTransferAdvertisement(Advertisement):
         self.add_service_uuid(FILE_TRANSFER_SERVICE_UUID)
         self.add_local_name('FileTransfer')
         self.include_tx_power = True
+        self.includes = ['tx-power']
 
 
 def register_app_cb():
@@ -573,13 +577,13 @@ def register_ad_error_cb(error):
 
 
 def find_adapter(bus):
-    """Find the first available Bluetooth adapter"""
+    """Find the first available Bluetooth adapter that supports GATT management"""
     remote_om = dbus.Interface(bus.get_object(BLUEZ_SERVICE_NAME, '/'),
                                DBUS_OM_IFACE)
     objects = remote_om.GetManagedObjects()
 
     for o, props in objects.items():
-        if 'org.bluez.Adapter1' in props:
+        if GATT_MANAGER_IFACE in props:
             return o
 
     return None
